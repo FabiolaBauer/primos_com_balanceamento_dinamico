@@ -1,7 +1,19 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
 #include <time.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int n = 5000000;
+int chunck = 5000;
+int next = 1;
+int total = 0;
+int chunks_processados = 0;
+int total_chunks;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 bool is_even(int n) {
     return n % 2 == 0 && n != 2;
@@ -17,47 +29,90 @@ bool is_prime(int n) {
     return true;
 }
 
-int loop_numeros(int n, int chunck) {
-    int contador = 0;
+void mostrar_progresso() {
+    float progresso = ((float) chunks_processados / total_chunks) * 100;
     int largura = 40;
+    int preenchido = (int)((progresso / 100) * largura);
 
-    for (int i = 1; i < n; i++) {
-        if (is_prime(i)) contador++;
-
-        if (i % chunck == 0) {
-            float proporcao = (float)i / n;
-            int preenchido = (int)(proporcao * largura);
-
-            printf("\r[");
-            for (int j = 0; j < largura; j++) {
-                if (j < preenchido)
-                    printf("#");
-                else
-                    printf(" ");
-            }
-            printf("] %.1f%%", proporcao * 100);
-            fflush(stdout);
-        }
+    printf("\r[");
+    
+    for (int i = 0; i < largura; i++) {
+        if (i < preenchido)
+            printf("#");
+        else
+            printf(" ");
     }
+
+    printf("] %.1f%%", progresso);
+
+    if (chunks_processados == total_chunks)
     printf("\n");
 
-    return contador;
+    fflush(stdout);
 }
-int main() {
-    int n = 5000000;
-    int chunck = 5000;
 
-    clock_t inicio, fim;
-    double tempo_gasto;
-    inicio = clock();
+void *trabalhador(void *arg) {
+    while (1) {
+        pthread_mutex_lock(&mutex);
+        int inicio = next;
+        next += chunck;
+        pthread_mutex_unlock(&mutex);
 
-    int resultado = loop_numeros(n, chunck);
+        if (inicio > n) break;
 
-    fim = clock();
-    tempo_gasto = ((double) (fim - inicio)) / CLOCKS_PER_SEC;
+        int fim = inicio + chunck - 1;
+        if (fim > n) fim = n;
 
-    printf("possui %d números primos\n", resultado);
-    printf("Tempo de execução: %f segundos\n", tempo_gasto);
+        int local = 0;
+        for (int i = inicio; i <= fim; i++)
+            if (is_prime(i)) local++;
+
+        pthread_mutex_lock(&mutex);
+
+        total += local;
+        chunks_processados++;
+        mostrar_progresso();
+
+        pthread_mutex_unlock(&mutex);
+    }
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Uso: %s k\n", argv[0]);
+        return 1;
+    }
+
+    int k = atoi(argv[1]);
+    if (k == 0) k = sysconf(_SC_NPROCESSORS_ONLN);
+
+    total_chunks = (n + chunck - 1) / chunck;
+
+    pthread_t threads[k];
+
+
+    struct timespec inicio, fim;
+    long tempo_ms;
+
+    clock_gettime(CLOCK_MONOTONIC, &inicio);
+
+
+    for (int i = 0; i < k; i++)
+        pthread_create(&threads[i], NULL, trabalhador, NULL);
+
+    for (int i = 0; i < k; i++)
+        pthread_join(threads[i], NULL);
+
     
+    clock_gettime(CLOCK_MONOTONIC, &fim);
+
+    tempo_ms = (fim.tv_sec - inicio.tv_sec) * 1000;
+    tempo_ms += (fim.tv_nsec - inicio.tv_nsec) / 1000000;
+
+
+    printf("possui %d números primos\n", total);
+    printf("Tempo de execução: %ld ms\n", tempo_ms);
+
     return 0;
 }
